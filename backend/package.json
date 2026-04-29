@@ -1,0 +1,31 @@
+{
+  "name": "test-plan-backend",
+  "version": "1.0.0",
+  "description": "Backend for Test Plan Creator Agent - Playwright MCP Execution",
+  "type": "module",
+  "scripts": {
+    "start": "npx tsx server.ts",
+    "dev": "npx tsx --watch server.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.0",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "nodemailer": "^8.0.4",
+    "openai": "^6.33.0",
+    "playwright": "^1.59.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.5.0",
+    "@types/nodemailer": "^7.0.11",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  }
+}

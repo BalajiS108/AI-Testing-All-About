@@ -29,9 +29,22 @@ function App() {
   useEffect(() => {
     const savedConnections = localStorage.getItem('tp_connections')
     const savedLlm = localStorage.getItem('tp_llm_config')
-    if (savedConnections) setConnections(JSON.parse(savedConnections))
+    const savedProduct = localStorage.getItem('tp_product_name')
+    const savedProject = localStorage.getItem('tp_project_key')
+    const savedSprint = localStorage.getItem('tp_sprint_version')
+    const savedContext = localStorage.getItem('tp_additional_context')
+
+    if (savedConnections) {
+      const conns = JSON.parse(savedConnections);
+      setConnections(conns);
+      if (conns.length > 0) setActiveConnection(conns[0]);
+    }
     if (savedLlm) setLlmConfig(JSON.parse(savedLlm))
-    
+    if (savedProduct) setProductName(savedProduct)
+    if (savedProject) setProjectKey(savedProject)
+    if (savedSprint) setSprintVersion(savedSprint)
+    if (savedContext) setAdditionalContext(savedContext)
+
     // Auto-detect system preference if no saved theme
     const savedTheme = localStorage.getItem('tp_theme')
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -40,6 +53,14 @@ function App() {
       document.documentElement.classList.add('dark');
     }
   }, [])
+
+  // Auto-save project setup
+  useEffect(() => {
+    localStorage.setItem('tp_product_name', productName);
+    localStorage.setItem('tp_project_key', projectKey);
+    localStorage.setItem('tp_sprint_version', sprintVersion);
+    localStorage.setItem('tp_additional_context', additionalContext);
+  }, [productName, projectKey, sprintVersion, additionalContext]);
 
   const toggleTheme = () => {
     const newTheme = !isDarkMode ? 'dark' : 'light';
@@ -58,48 +79,49 @@ function App() {
   };
 
   const renderStep = () => {
-    switch(step) {
-      case 1: return <JiraConnection 
-                activeConnection={activeConnection}
-                connections={connections}
-                onSelectConnection={handleSelectConnection}
-                onAddConnection={() => setIsSettingsOpen(true)}
-                onContinue={() => setStep(2)} 
-              />;
-      case 2: return <FetchIssues 
-                activeConnection={activeConnection}
-                productName={productName}
-                setProductName={setProductName}
-                projectKey={projectKey}
-                setProjectKey={setProjectKey}
-                sprintVersion={sprintVersion}
-                setSprintVersion={setSprintVersion}
-                additionalContext={additionalContext}
-                setAdditionalContext={setAdditionalContext}
-                onFetch={handleFetchIssues} 
-                onBack={() => setStep(1)} 
-              />;
-      case 3: return <ReviewIssues 
-                activeConnection={activeConnection}
-                issues={fetchedIssues}
-                additionalContext={additionalContext}
-                setAdditionalContext={setAdditionalContext}
-                outputType={outputType}
-                setOutputType={setOutputType}
-                onGenerate={handleGeneratePlan} 
-                isGenerating={isGenerating}
-              />;
-      case 4: return <TestPlanView 
-                plan={generatedPlan} 
-                productName={productName}
-              />;
-      default: return <JiraConnection 
-                activeConnection={activeConnection}
-                connections={connections}
-                onSelectConnection={handleSelectConnection}
-                onAddConnection={() => setIsSettingsOpen(true)}
-                onContinue={() => setStep(2)} 
-              />;
+    switch (step) {
+      case 1: return <JiraConnection
+        activeConnection={activeConnection}
+        connections={connections}
+        onSelectConnection={handleSelectConnection}
+        onAddConnection={() => setIsSettingsOpen(true)}
+        onContinue={() => setStep(2)}
+      />;
+      case 2: return <FetchIssues
+        activeConnection={activeConnection}
+        productName={productName}
+        setProductName={setProductName}
+        projectKey={projectKey}
+        setProjectKey={setProjectKey}
+        sprintVersion={sprintVersion}
+        setSprintVersion={setSprintVersion}
+        additionalContext={additionalContext}
+        setAdditionalContext={setAdditionalContext}
+        onFetch={handleFetchIssues}
+        onBack={() => setStep(1)}
+      />;
+      case 3: return <ReviewIssues
+        activeConnection={activeConnection}
+        issues={fetchedIssues}
+        additionalContext={additionalContext}
+        setAdditionalContext={setAdditionalContext}
+        outputType={outputType}
+        setOutputType={setOutputType}
+        onGenerate={handleGeneratePlan}
+        isGenerating={isGenerating}
+      />;
+      case 4: return <TestPlanView
+        plan={generatedPlan}
+        productName={productName}
+        llmConfig={llmConfig}
+      />;
+      default: return <JiraConnection
+        activeConnection={activeConnection}
+        connections={connections}
+        onSelectConnection={handleSelectConnection}
+        onAddConnection={() => setIsSettingsOpen(true)}
+        onContinue={() => setStep(2)}
+      />;
     }
   }
 
@@ -165,13 +187,13 @@ function App() {
             <History size={14} />
             History
           </button>
-          <button 
+          <button
             onClick={toggleTheme}
             className="p-2.5 border border-slate-200 bg-white rounded-xl hover:bg-slate-50 transition-all text-slate-500 hover:text-blue-600 shadow-sm active:scale-95 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-blue-400"
           >
             {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
           </button>
-          <button 
+          <button
             onClick={() => setIsSettingsOpen(true)}
             className="p-2.5 border border-slate-200 bg-white rounded-xl hover:bg-slate-50 transition-all text-slate-500 hover:text-blue-600 shadow-sm active:scale-95 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-blue-400"
           >
@@ -189,20 +211,18 @@ function App() {
             { id: 3, name: 'Review' },
             { id: 4, name: 'Plan' }
           ].map((s) => (
-            <div 
+            <div
               key={s.id}
               onClick={() => step > s.id && setStep(s.id)}
-              className={`flex-1 flex items-center justify-center gap-3 py-4 px-8 rounded-2xl transition-all duration-300 cursor-pointer ${
-                step === s.id 
-                  ? 'bg-gradient-to-br from-blue-600 to-blue-700 text-white font-black shadow-xl shadow-blue-200 dark:shadow-blue-900/30 scale-[1.02]' 
-                  : step > s.id 
-                    ? 'text-blue-600 font-bold hover:bg-blue-50/50 dark:text-blue-400 dark:hover:bg-slate-800' 
-                    : 'text-slate-300 font-bold dark:text-slate-600'
-              }`}
+              className={`flex-1 flex items-center justify-center gap-3 py-4 px-8 rounded-2xl transition-all duration-300 cursor-pointer ${step === s.id
+                ? 'bg-gradient-to-br from-blue-600 to-blue-700 text-white font-black shadow-xl shadow-blue-200 dark:shadow-blue-900/30 scale-[1.02]'
+                : step > s.id
+                  ? 'text-blue-600 font-bold hover:bg-blue-50/50 dark:text-blue-400 dark:hover:bg-slate-800'
+                  : 'text-slate-300 font-bold dark:text-slate-600'
+                }`}
             >
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] border-2 ${
-                step >= s.id ? 'border-current' : 'border-slate-200 dark:border-slate-700'
-              }`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] border-2 ${step >= s.id ? 'border-current' : 'border-slate-200 dark:border-slate-700'
+                }`}>
                 {s.id}
               </div>
               <span className="text-[11px] uppercase tracking-[0.2em]">{s.name}</span>
@@ -212,16 +232,16 @@ function App() {
 
         {/* Dynamic Content */}
         <main className="bg-white border border-slate-200 rounded-[3rem] p-16 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.08)] min-h-[600px] flex flex-col transition-all duration-700 ease-out transform translate-y-0 dark:bg-slate-900 dark:border-slate-800 dark:shadow-[0_32px_64px_-16px_rgba(0,0,0,0.4)]">
-             <div className="flex-1 animate-in fade-in slide-in-from-bottom-4 duration-700">
-                {renderStep()}
-             </div>
+          <div className="flex-1 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            {renderStep()}
+          </div>
         </main>
       </div>
 
       {/* Settings Modal */}
-      <SettingsModal 
-        isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)} 
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
         connections={connections}
         onSaveConnections={handleSaveConnections}
         llmConfig={llmConfig}
@@ -230,7 +250,7 @@ function App() {
 
       {/* Footer Info */}
       <footer className="max-w-6xl mx-auto px-4 py-12 text-center opacity-40">
-         <p className="text-[9px] font-black uppercase tracking-[0.5em] text-slate-400">Master System Pilot • Antigravity AI</p>
+        <p className="text-[9px] font-black uppercase tracking-[0.5em] text-slate-400">Master System Pilot • Antigravity AI</p>
       </footer>
     </div>
   )
