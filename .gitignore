@@ -1,24 +1,23 @@
 # Python
 venv/
-backend/venv/
-__pycache__/
+**/backend/venv/
+**/__pycache__/
 *.pyc
 
 # Node
 node_modules/
-frontend/node_modules/
+**/node_modules/
 dist/
 
 # Local DB
-chroma_db/
-backend/chroma_db/
+**/chroma_db/
+
+# RAG Project Specifics
+**/backend/uploads/
+**/scratch/
+**/verify_fix.py
+**/debug_bm25.py
 
 # Misc
 .env
 .DS_Store
-backend/uploads/
-scratch/
-verify_fix.py
-debug_bm25.py
-*.pyc
-__pycache__/
