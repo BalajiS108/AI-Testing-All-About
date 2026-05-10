@@ -16,3 +16,9 @@ backend/chroma_db/
 # Misc
 .env
 .DS_Store
+backend/uploads/
+scratch/
+verify_fix.py
+debug_bm25.py
+*.pyc
+__pycache__/

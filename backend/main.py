@@ -63,8 +63,8 @@ async def query_rag(
     query: str = Form(...),
     api_key: str = Form(...),
     model_name: str = Form("llama-3.1-8b-instant"),
-    top_k: int = Form(5),
-    rerank_top_n: int = Form(3)
+    top_k: int = Form(10),
+    rerank_top_n: int = Form(10)
 ):
     try:
         results = retriever.query(query, api_key, model_name, top_k, rerank_top_n)

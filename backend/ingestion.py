@@ -6,6 +6,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from typing import Dict, List, Any
 import uuid
+import re
 
 class Ingestor:
     def __init__(self):
@@ -49,39 +50,61 @@ class Ingestor:
         self.stats["file_list"].append(file_name)
         self.stats["total_files"] = len(self.stats["file_list"])
 
-        all_text = ""
-        
+        new_chunks = []
+        new_metadatas = []
+
         # Load data based on format
         if file_path.endswith('.csv'):
-            df = pd.read_csv(file_path)
-            all_text = "\n\n".join([f"ROW: {row.to_dict()}" for _, row in df.iterrows()])
+            try:
+                # Try UTF-8 first, fallback to latin-1
+                df = pd.read_csv(file_path, encoding='utf-8')
+            except UnicodeDecodeError:
+                df = pd.read_csv(file_path, encoding='latin-1')
+            
+            for i, row in df.iterrows():
+                row_str = ", ".join([f"{col}: {val}" for col, val in row.to_dict().items()])
+                new_chunks.append(f"DATA ROW: {row_str}")
+                new_metadatas.append({"source": file_name, "row_index": i})
+            
             if not self.stats["raw_preview"]:
                 self.stats["raw_preview"] = df.head(10).to_dict(orient='records')
+
         elif file_path.endswith(('.xls', '.xlsx')):
             df = pd.read_excel(file_path)
-            all_text = "\n\n".join([f"ROW: {row.to_dict()}" for _, row in df.iterrows()])
+            for i, row in df.iterrows():
+                row_str = ", ".join([f"{col}: {val}" for col, val in row.to_dict().items()])
+                new_chunks.append(f"DATA ROW: {row_str}")
+                new_metadatas.append({"source": file_name, "row_index": i})
+            
             if not self.stats["raw_preview"]:
                 self.stats["raw_preview"] = df.head(10).to_dict(orient='records')
+
         elif file_path.endswith('.pdf'):
             loader = PyPDFLoader(file_path)
             pages = loader.load()
             all_text = "\n\n".join([p.page_content for p in pages])
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                separators=["\n\n", "\n", ". ", " ", ""]
+            )
+            new_chunks = text_splitter.split_text(all_text)
+            new_metadatas = [{"source": file_name, "chunk_index": i} for i in range(len(new_chunks))]
+
         elif file_path.endswith('.txt'):
             with open(file_path, 'r', encoding='utf-8') as f:
                 all_text = f.read()
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                separators=["\n\n", "\n", ". ", " ", ""]
+            )
+            new_chunks = text_splitter.split_text(all_text)
+            new_metadatas = [{"source": file_name, "chunk_index": i} for i in range(len(new_chunks))]
         else:
             raise ValueError(f"Unsupported format: {file_name}")
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            separators=["\n\n", "\n", ". ", " ", ""]
-        )
-
-        new_chunks = text_splitter.split_text(all_text)
-        new_metadatas = [{"source": file_name, "chunk_index": i} for i in range(len(new_chunks))]
-
-        # Add to ChromaDB
+        # Add to ChromaDB in batches
         batch_size = 100
         for i in range(0, len(new_chunks), batch_size):
             end = min(i + batch_size, len(new_chunks))
@@ -90,6 +113,8 @@ class Ingestor:
                 metadatas=new_metadatas[i:end],
                 ids=[str(uuid.uuid4()) for _ in range(i, end)]
             )
+        
+        print(f"Ingested {len(new_chunks)} chunks from {file_name}")
 
         # Update cumulative stats
         self.stats["chunks_all"].extend(new_chunks)

@@ -27,8 +27,8 @@ const App: React.FC = () => {
   const [overlap, setOverlap] = useState(100);
   const [apiKey, setApiKey] = useState('');
   const [modelName, setModelName] = useState('llama-3.1-8b-instant');
-  const [topK, setTopK] = useState(5);
-  const [rerankTopN, setRerankTopN] = useState(3);
+  const [topK, setTopK] = useState(15);
+  const [rerankTopN, setRerankTopN] = useState(15);
   
   const [query, setQuery] = useState('');
   const [isQuerying, setIsQuerying] = useState(false);
@@ -322,7 +322,20 @@ const App: React.FC = () => {
                   <form onSubmit={handleQuery} style={{ position: 'relative' }}>
                     <Search style={{ position: 'absolute', left: '20px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} size={20} />
                     <input type="text" className="input-field" style={{ padding: '18px 20px 18px 54px', borderRadius: '40px', fontSize: '16px' }} placeholder="Ask about your knowledge pool..." value={query} onChange={(e)=>setQuery(e.target.value)} />
-                    <button type="submit" className="btn-primary" style={{ position: 'absolute', right: '8px', top: '8px', borderRadius: '30px', padding: '10px 24px' }} disabled={isQuerying || !stats}>
+                    <button 
+                      type="submit" 
+                      className="btn-primary" 
+                      style={{ 
+                        position: 'absolute', 
+                        right: '8px', 
+                        top: '50%', 
+                        transform: 'translateY(-50%)',
+                        width: 'auto',
+                        borderRadius: '30px', 
+                        padding: '10px 24px' 
+                      }} 
+                      disabled={isQuerying || !stats}
+                    >
                       {isQuerying ? 'Analyzing...' : 'Search'}
                     </button>
                   </form>
