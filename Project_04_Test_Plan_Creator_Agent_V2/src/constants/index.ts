@@ -1,4 +1,4 @@
-import { ALMProvider, LLMProvider } from './types';
+import { ALMProvider, LLMProvider } from '../types';
 
 export const ALM_PROVIDERS: { id: ALMProvider; name: string }[] = [
   { id: 'Jira', name: 'Jira Cloud' },

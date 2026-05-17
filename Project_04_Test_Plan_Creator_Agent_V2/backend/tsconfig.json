@@ -15,6 +15,18 @@
     ],
     "exclude": [
         "node_modules",
-        "dist"
+        "dist",
+        "reports",
+        "videos",
+        "history",
+        "auth",
+        "api-suites",
+        "visual-baselines",
+        "visual-diffs",
+        "inspect-page.ts",
+        "inspect-signup.ts",
+        "test-signup-direct.ts",
+        "debug-tools.ts",
+        "playwright-mcp.ts"
     ]
 }

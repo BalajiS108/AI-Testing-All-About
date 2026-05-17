@@ -83,7 +83,16 @@ app.use('/audit-images/baselines', express.static(BASELINE_DIR));
 app.use('/audit-images/diffs', express.static(DIFF_DIR));
 
 // Progress Tracking
-let executionStatus = {
+interface ExecutionStatus {
+    isRunning: boolean;
+    currentCase: string;
+    progress: number;
+    total: number;
+    action: string;
+    currentCaseId?: string;
+    currentCaseName?: string;
+}
+let executionStatus: ExecutionStatus = {
     isRunning: false,
     currentCase: '',
     progress: 0,
@@ -562,7 +571,7 @@ app.post('/api/run-playwright', async (req, res) => {
             stdout += chunk;
             // Extract test titles from 'list' reporter output: e.g. "  ✓  1 [chromium] › test.spec.ts:14:3 › TC-1..."
             const lines = chunk.split('\n');
-            lines.forEach(line => {
+            lines.forEach((line: string) => {
                 if (line.includes('›')) {
                     const parts = line.split('›');
                     const title = parts[parts.length - 1].trim();

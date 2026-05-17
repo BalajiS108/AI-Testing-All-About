@@ -215,7 +215,7 @@ function parseTestCases(markdownPlan: string): any[] {
 export async function runAgent(
     testCasesMarkdown: string,
     llmConfig: any,
-    onProgress?: (status: { currentCase: string; progress: number; total: number; action?: string }) => void,
+    onProgress?: (status: { currentCase: string; progress: number; total: number; action?: string; currentCaseId?: string; currentCaseName?: string }) => void,
     options?: { autoHeal?: boolean }
 ): Promise<ExecutionReport> {
     console.log("🚀 Starting Playwright MCP Agent with Video Recording...");
@@ -1598,7 +1598,8 @@ CRITICAL RULES:
                     stepPassed = false;
                 } else {
                     stepResultDetails = "Step not reached or failed during execution";
-                    stepPassed = verdict === "PASS";
+                    // At this branch verdict is FAIL/SKIPPED/null (PASS was handled above)
+                    stepPassed = false;
                 }
 
                 // If the whole test failed and this is the "farthest" reached step, ensure it shows the fail
@@ -1628,7 +1629,9 @@ CRITICAL RULES:
                 name: tc.name,
                 jiraKey: tc.jiraKey,
                 priority: tc.priority,
-                status: verdict,
+                // verdict is non-null at this point thanks to the resolution
+                // logic above — the `?? 'FAIL'` is a TS-narrowing safety net.
+                status: (verdict ?? 'FAIL') as 'PASS' | 'FAIL' | 'SKIPPED' | 'ERROR',
                 steps: stepResults,
                 expectedResult: tc.expectedResult,
                 actualResult: actualResult,
@@ -1646,7 +1649,8 @@ CRITICAL RULES:
             console.log(`   Duration: ${Date.now() - tcStart}ms`);
 
             // ─── AUTO-HEAL: If test failed and auto-heal is enabled, retry once ───
-            if (autoHeal && (verdict === 'FAIL' || verdict === 'ERROR') && client) {
+            // verdict's possible values are PASS | FAIL | SKIPPED — heal only on FAIL.
+            if (autoHeal && verdict === 'FAIL' && client) {
                 console.log(`\n🧬 AUTO-HEAL: Test case failed. Attempting healing retry...`);
                 if (onProgress) {
                     onProgress({
@@ -1738,11 +1742,15 @@ After completing all steps, you MUST output this JSON on the last line: {"verdic
 
                         // Execute tool calls
                         for (const tc2 of healMsg.tool_calls) {
-                            let toolName = tc2.function.name;
+                            // Newer openai SDK distinguishes function-typed vs custom-typed tool
+                            // calls — narrow with `as any` so we keep the same access pattern
+                            // as the rest of this file (which already uses this idiom).
+                            const tcAny = tc2 as any;
+                            let toolName = tcAny.function?.name;
                             let args;
                             try {
-                                args = typeof tc2.function.arguments === 'string'
-                                    ? JSON.parse(tc2.function.arguments) : tc2.function.arguments;
+                                args = typeof tcAny.function?.arguments === 'string'
+                                    ? JSON.parse(tcAny.function.arguments) : tcAny.function?.arguments;
                             } catch { args = {}; }
 
                             console.log(`  🧬 HEAL Action: ${toolName}(${JSON.stringify(args).slice(0, 80)}...)`);
