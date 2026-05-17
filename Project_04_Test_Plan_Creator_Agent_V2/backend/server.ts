@@ -6,7 +6,7 @@ import fs from 'fs';
 import multer from 'multer';
 import mammoth from 'mammoth';
 import * as cheerio from 'cheerio';
-import { runAgent, ExecutionReport } from './agent.js';
+import { runAgent, runAgentParallel, ExecutionReport, ParallelProgress } from './agent.js';
 import { runAgentWithCodeGeneration } from './run-agent-codegen.js';
 import { generateExcelReport, generateHtmlReport } from './report.js';
 import {
@@ -83,21 +83,36 @@ app.use('/audit-images/baselines', express.static(BASELINE_DIR));
 app.use('/audit-images/diffs', express.static(DIFF_DIR));
 
 // Progress Tracking
+interface WorkerSlot {
+    workerId: number;
+    currentCase: string;
+    currentCaseId?: string;
+    currentCaseName?: string;
+    progress: number;
+    total: number;
+    action?: string;
+    updatedAt: number;
+}
+
 interface ExecutionStatus {
     isRunning: boolean;
-    currentCase: string;
+    currentCase: string;            // legacy field — mirrors worker 1 for backward compat
     progress: number;
     total: number;
     action: string;
     currentCaseId?: string;
     currentCaseName?: string;
+    concurrency: number;             // how many workers were requested for this run
+    workers: WorkerSlot[];           // per-worker live status — empty when not running
 }
 let executionStatus: ExecutionStatus = {
     isRunning: false,
     currentCase: '',
     progress: 0,
     total: 0,
-    action: ''
+    action: '',
+    concurrency: 1,
+    workers: [],
 };
 
 let stopRequested = false;
@@ -116,6 +131,42 @@ export const resetStopFlag = () => {
 
 export const updateExecutionStatus = (status: any) => {
     executionStatus = { ...executionStatus, ...status };
+};
+
+/**
+ * Per-worker progress update — used by runAgentParallel.
+ * Looks up the worker slot by id and replaces it with the new state.
+ * Also mirrors worker 1's state onto the legacy top-level fields so older
+ * UIs that don't know about workers still see something sensible.
+ */
+export const updateWorkerStatus = (status: ParallelProgress) => {
+    const idx = executionStatus.workers.findIndex((w) => w.workerId === status.workerId);
+    const slot: WorkerSlot = {
+        workerId: status.workerId,
+        currentCase: status.currentCase,
+        currentCaseId: status.currentCaseId,
+        currentCaseName: status.currentCaseName,
+        progress: status.progress,
+        total: status.total,
+        action: status.action,
+        updatedAt: Date.now(),
+    };
+    if (idx === -1) executionStatus.workers.push(slot);
+    else executionStatus.workers[idx] = slot;
+
+    // Mirror worker 1 into the top-level legacy fields so anything that still
+    // reads executionStatus.currentCase keeps working.
+    if (status.workerId === 1) {
+        executionStatus = {
+            ...executionStatus,
+            currentCase: status.currentCase,
+            currentCaseId: status.currentCaseId,
+            currentCaseName: status.currentCaseName,
+            progress: status.progress,
+            total: status.total,
+            action: status.action || '',
+        };
+    }
 };
 
 export const addPartialResult = (result: any) => {
@@ -202,15 +253,19 @@ app.get('/api/partial-results', async (_req, res) => {
 
 app.post('/api/execute', async (req, res) => {
     try {
-        const { testCases, llmConfig, autoHeal } = req.body;
+        const { testCases, llmConfig, autoHeal, concurrency } = req.body;
 
         if (!testCases || !llmConfig) {
             return res.status(400).json({ success: false, error: 'Missing testCases or llmConfig in request body.' });
         }
 
+        // Clamp concurrency to a sane range [1, 5]. Default 1 = sequential (legacy behavior).
+        const workers = Math.max(1, Math.min(Number(concurrency) || 1, 5));
+
         console.log('\n========================================');
         console.log('🧪 Test Execution Request Received');
         console.log(`🧬 Auto-Heal: ${autoHeal ? 'ENABLED' : 'DISABLED'}`);
+        console.log(`⚡ Concurrency: ${workers} ${workers > 1 ? `(parallel — ${workers} workers)` : '(sequential)'}`);
         console.log('========================================');
 
         executionStatus = {
@@ -220,13 +275,18 @@ app.post('/api/execute', async (req, res) => {
             currentCaseName: 'Initializing...',
             progress: 0,
             total: testCases.length,
-            action: 'Connecting to MCP...'
+            action: 'Connecting to MCP...',
+            concurrency: workers,
+            workers: [],
         };
         stopRequested = false;
         partialResults = []; // Reset for new run
 
-        // Run the LLM agent with Playwright MCP
-        const report: ExecutionReport = await runAgent(testCases, llmConfig, updateExecutionStatus, { autoHeal: !!autoHeal });
+        // Pick the right runner. The parallel path is wired through
+        // updateWorkerStatus so each worker keeps its own slot.
+        const report: ExecutionReport = workers > 1
+            ? await runAgentParallel(testCases, llmConfig, workers, updateWorkerStatus, { autoHeal: !!autoHeal })
+            : await runAgent(testCases, llmConfig, updateExecutionStatus, { autoHeal: !!autoHeal });
 
         // Generate reports
         const reportPath = await generateExcelReport(report);

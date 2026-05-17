@@ -91,6 +91,31 @@ export const TestPlanView: React.FC<TestPlanViewProps> = ({ plan, productName, l
   // Auto-heal toggle
   const [autoHealEnabled, setAutoHealEnabled] = useState(false);
 
+  // Concurrency selector (parallel MCP execution). Default 1 = sequential
+  // (current behavior preserved). Persisted in localStorage so the user's
+  // pick survives reloads. Range 1-5.
+  const [concurrency, setConcurrency] = useState<number>(() => {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('tp_mcp_concurrency') : null;
+    const n = Number(saved);
+    return Number.isFinite(n) && n >= 1 && n <= 5 ? n : 1;
+  });
+  useEffect(() => {
+    try { localStorage.setItem('tp_mcp_concurrency', String(concurrency)); } catch { /* quota */ }
+  }, [concurrency]);
+
+  // Multi-worker live status (only populated when concurrency > 1 and the
+  // backend has parallel mode running). Each entry is one worker slot.
+  interface WorkerLiveStatus {
+    workerId: number;
+    currentCase: string;
+    currentCaseId?: string;
+    currentCaseName?: string;
+    progress: number;
+    total: number;
+    action?: string;
+  }
+  const [workerStatuses, setWorkerStatuses] = useState<WorkerLiveStatus[]>([]);
+
   // Jira test-case sync state
   // Mapping keys are parsed-test-case IDs ("TC-1") OR runtime test IDs ("1");
   // we look up by both forms to bridge the parse/execute boundary.
@@ -324,6 +349,7 @@ export const TestPlanView: React.FC<TestPlanViewProps> = ({ plan, productName, l
     setExecutionError(null);
     setReport(null);
     setExecutionProgress({ currentCase: 'Starting...', progress: 0, total: 0, action: '' });
+    setWorkerStatuses([]);
 
     const host = window.location.hostname || 'localhost';
     const backendUrl = `http://${host}:3001`;
@@ -341,6 +367,10 @@ export const TestPlanView: React.FC<TestPlanViewProps> = ({ plan, productName, l
             total: data.total,
             action: data.action || ''
           });
+          // Capture per-worker statuses when parallel mode is active
+          if (Array.isArray(data.workers) && data.workers.length > 0) {
+            setWorkerStatuses(data.workers);
+          }
         }
       } catch (e) { }
     }, 1000);
@@ -360,6 +390,9 @@ export const TestPlanView: React.FC<TestPlanViewProps> = ({ plan, productName, l
           // Auto-heal is MCP-only — never send true for script mode even if
           // the toggle was left on before switching modes
           autoHeal: executionMethod === 'mcp' ? autoHealEnabled : false,
+          // Concurrency only applies to MCP mode for now. Script mode runs
+          // through a different code path and ignores this.
+          concurrency: executionMethod === 'mcp' ? concurrency : 1,
         })
       });
       const data = await response.json();
@@ -784,6 +817,28 @@ export const TestPlanView: React.FC<TestPlanViewProps> = ({ plan, productName, l
               ? 'Running...'
               : executionMethod === 'mcp' ? 'Run with MCP Mode' : 'Run with Playwright Script Mode'}
           </button>
+          {/* Concurrency selector — only meaningful in MCP mode */}
+          <div
+            className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border bg-white dark:bg-slate-800 ${
+              executionMethod === 'mcp' ? 'border-slate-200 dark:border-slate-700' : 'border-slate-100 dark:border-slate-800 opacity-50'
+            }`}
+            title={executionMethod === 'mcp'
+              ? `Run ${concurrency} test case${concurrency > 1 ? 's' : ''} in parallel (each gets its own browser). 1 = sequential.`
+              : 'Concurrency only applies to MCP mode'}
+          >
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">⚡ Workers</span>
+            <select
+              value={concurrency}
+              onChange={(e) => setConcurrency(Number(e.target.value))}
+              disabled={isExecuting || executionMethod !== 'mcp'}
+              className="bg-transparent text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer focus:outline-none disabled:cursor-not-allowed"
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </div>
+
           {/* Auto-Heal Toggle — only meaningful in MCP mode, disabled otherwise */}
           <button
             onClick={() => setAutoHealEnabled(!autoHealEnabled)}
@@ -925,8 +980,54 @@ export const TestPlanView: React.FC<TestPlanViewProps> = ({ plan, productName, l
         </div>
       )}
 
-      {/* Execution Progress Bar */}
-      {isExecuting && (
+      {/* ── Parallel mode: multi-worker live grid ─────────────────────── */}
+      {isExecuting && workerStatuses.length > 1 && (
+        <div className="mb-8 bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-2xl p-6 dark:from-indigo-900/20 dark:to-blue-900/20 dark:border-indigo-800">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <Zap size={18} className="text-indigo-600 dark:text-indigo-400" />
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600 dark:text-indigo-400">Parallel Execution</p>
+                <p className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                  {workerStatuses.length} worker{workerStatuses.length === 1 ? '' : 's'} active
+                </p>
+              </div>
+            </div>
+            <div className="px-3 py-1 bg-white dark:bg-slate-800 rounded-full text-[10px] font-black uppercase tracking-widest text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+              Concurrency × {concurrency}
+            </div>
+          </div>
+          <div className="space-y-2">
+            {workerStatuses
+              .slice()
+              .sort((a, b) => a.workerId - b.workerId)
+              .map((w) => (
+                <div
+                  key={w.workerId}
+                  className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white border border-indigo-100 dark:bg-slate-900 dark:border-indigo-900/40"
+                >
+                  <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-600 text-white text-xs font-black flex-shrink-0">
+                    W{w.workerId}
+                  </span>
+                  <RefreshCcw size={14} className="text-indigo-400 dark:text-indigo-500 animate-spin flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-slate-800 truncate dark:text-slate-100">
+                      {w.currentCaseId && <span className="text-indigo-600 dark:text-indigo-400 mr-2">{w.currentCaseId}</span>}
+                      {w.currentCaseName || w.currentCase || 'Initializing...'}
+                    </p>
+                    <p className="text-[11px] text-slate-500 truncate dark:text-slate-400">{w.action || 'Thinking...'}</p>
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex-shrink-0">
+                    {w.progress}/{w.total}
+                  </span>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Execution Progress Bar — sequential mode (single worker) */}
+      {isExecuting && workerStatuses.length <= 1 && (
         <div className="mb-8 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-2xl p-6 dark:from-emerald-900/20 dark:to-teal-900/20 dark:border-emerald-800">
           <div className="flex items-center gap-6">
             <div className="relative flex-shrink-0">

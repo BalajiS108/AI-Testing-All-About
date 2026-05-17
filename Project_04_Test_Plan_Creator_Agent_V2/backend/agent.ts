@@ -42,7 +42,7 @@ export interface ExecutionReport {
     results: TestCaseResult[];
 }
 
-function parseTestCases(markdownPlan: string): any[] {
+export function parseTestCases(markdownPlan: string): any[] {
     console.log("🔍 MCP Agent: Parsing test cases from markdown...");
     console.log("📝 Input length:", markdownPlan.length);
 
@@ -213,11 +213,16 @@ function parseTestCases(markdownPlan: string): any[] {
 }
 
 export async function runAgent(
-    testCasesMarkdown: string,
+    // Accept either raw markdown OR a pre-parsed test-case array. The parallel
+    // runner (runAgentParallel) parses the full plan once, splits it across
+    // workers, then passes each worker's slice as an array — saves re-parsing
+    // the same markdown N times and lets us partition deterministically.
+    testCasesInput: string | any[],
     llmConfig: any,
     onProgress?: (status: { currentCase: string; progress: number; total: number; action?: string; currentCaseId?: string; currentCaseName?: string }) => void,
     options?: { autoHeal?: boolean }
 ): Promise<ExecutionReport> {
+    const testCasesMarkdown = typeof testCasesInput === 'string' ? testCasesInput : '';
     console.log("🚀 Starting Playwright MCP Agent with Video Recording...");
     const autoHeal = options?.autoHeal || false;
     console.log(`🧬 Auto-Heal: ${autoHeal ? 'ENABLED' : 'DISABLED'}`);
@@ -245,7 +250,11 @@ export async function runAgent(
 
     console.log(`⚙️  Perf knobs: MAX_AGENT_TURNS=${MAX_AGENT_TURNS}, MAX_HEAL_TURNS=${MAX_HEAL_TURNS}, TOOL_RESULT_CHARS=${TOOL_RESULT_CHARS}`);
 
-    const testCases = parseTestCases(testCasesMarkdown);
+    // If caller supplied an already-parsed array (parallel runner path), use it
+    // directly. Otherwise parse the markdown like before.
+    const testCases = typeof testCasesInput === 'string'
+        ? parseTestCases(testCasesMarkdown)
+        : testCasesInput;
     console.log(`📋 Parsed ${testCases.length} test cases.`);
 
     if (onProgress) {
@@ -1866,4 +1875,92 @@ After completing all steps, you MUST output this JSON on the last line: {"verdic
         },
         results,
     };
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ *  Parallel runner — wraps `runAgent` to run N workers concurrently.
+ *
+ *  Each worker calls the existing runAgent with a SUBSET of test cases. Since
+ *  every runAgent invocation spawns its own MCP client (= its own Playwright
+ *  browser process), workers are fully isolated. No shared state between them
+ *  except the parent's onProgress callback (tagged by worker id).
+ *
+ *  Workload distribution is round-robin (worker N gets every Nth test) so
+ *  long tests don't pile up in one worker.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+export interface ParallelProgress {
+    workerId: number;
+    currentCase: string;
+    currentCaseId?: string;
+    currentCaseName?: string;
+    progress: number;
+    total: number;
+    action?: string;
+}
+
+export async function runAgentParallel(
+    testCasesMarkdown: string,
+    llmConfig: any,
+    concurrency: number,
+    onProgress?: (status: ParallelProgress) => void,
+    options?: { autoHeal?: boolean }
+): Promise<ExecutionReport> {
+    const allCases = parseTestCases(testCasesMarkdown);
+    const N = Math.max(1, Math.min(concurrency, allCases.length));
+    console.log(`\n🚀 PARALLEL EXECUTION: ${N} workers for ${allCases.length} test cases\n`);
+
+    if (N === 1) {
+        // Trivial case — defer to the sequential runner with no changes
+        return runAgent(testCasesMarkdown, llmConfig, (s) => {
+            onProgress?.({ workerId: 1, ...s });
+        }, options);
+    }
+
+    // Round-robin partition: worker i gets cases [i, i+N, i+2N, ...]
+    const buckets: any[][] = Array.from({ length: N }, () => []);
+    allCases.forEach((tc, idx) => buckets[idx % N].push(tc));
+
+    // Launch N workers concurrently. Each one calls runAgent on its bucket.
+    // The progress callback gets tagged with the worker id so the UI can
+    // attribute updates to the right slot.
+    const reports = await Promise.all(
+        buckets.map((bucket, workerIdx) => {
+            const workerId = workerIdx + 1;
+            const perWorkerProgress = onProgress
+                ? (s: { currentCase: string; progress: number; total: number; action?: string; currentCaseId?: string; currentCaseName?: string }) =>
+                    onProgress({ workerId, ...s })
+                : undefined;
+            return runAgent(bucket, llmConfig, perWorkerProgress, options).catch((err) => {
+                console.error(`❌ Worker ${workerId} crashed:`, err.message);
+                // Return an empty report so the merge still works
+                return {
+                    summary: { total: 0, passed: 0, failed: 0, skipped: 0, errors: 0, duration: 0, executedAt: new Date().toISOString() },
+                    results: [],
+                } as ExecutionReport;
+            });
+        })
+    );
+
+    // Merge: concatenate per-worker results, sort by test-case id so the
+    // report reads top-to-bottom in plan order, NOT completion order.
+    const mergedResults: TestCaseResult[] = reports
+        .flatMap((r) => r.results)
+        .sort((a, b) => a.id - b.id);
+
+    const summary = {
+        total: mergedResults.length,
+        passed: mergedResults.filter((r) => r.status === 'PASS').length,
+        failed: mergedResults.filter((r) => r.status === 'FAIL').length,
+        errors: mergedResults.filter((r) => r.status === 'ERROR').length,
+        skipped: mergedResults.filter((r) => r.status === 'SKIPPED').length,
+        // Duration in parallel is the longest worker's time (wall-clock),
+        // not the sum. Use max of per-worker summary durations.
+        duration: reports.reduce((max, r) => Math.max(max, r.summary.duration), 0),
+        executedAt: new Date().toISOString(),
+    };
+
+    console.log(`\n🏁 PARALLEL EXECUTION COMPLETE: ${summary.passed}/${summary.total} passed in ${(summary.duration / 1000).toFixed(1)}s (wall-clock)\n`);
+
+    return { summary, results: mergedResults };
 }
