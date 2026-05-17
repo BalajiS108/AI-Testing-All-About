@@ -9,7 +9,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "strict": true,
-    "types": ["node"]
+    "types": []
   },
   "include": ["vite.config.ts"]
 }
