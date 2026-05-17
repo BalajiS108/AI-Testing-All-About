@@ -1,14 +1,24 @@
-name: E2E Tests
+name: E2E Tests (Project_04 V2)
 
+# The V2 test-plan project lives at Project_04_Test_Plan_Creator_Agent_V2/.
+# This workflow only triggers when something inside that folder (or this
+# workflow file) changes — so unrelated commits to other folders in the repo
+# (e.g. RAG Implementation/) don't burn runner minutes here.
 on:
   push:
     branches: [main]
+    paths:
+      - 'Project_04_Test_Plan_Creator_Agent_V2/**'
+      - '.github/workflows/e2e-tests.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'Project_04_Test_Plan_Creator_Agent_V2/**'
+      - '.github/workflows/e2e-tests.yml'
   # Nightly regression at 02:00 UTC (07:30 IST). Adjust to your team's timezone.
   schedule:
     - cron: '0 2 * * *'
-  # Manual trigger from the Actions tab
+  # Manual trigger from the GitHub Actions tab OR the in-app CI/CD dashboard
   workflow_dispatch:
     inputs:
       reason:
@@ -22,6 +32,12 @@ concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: true
 
+# All steps run inside Project_04_Test_Plan_Creator_Agent_V2/ by default.
+# setup-node still inspects package-lock.json paths globally — that's fine.
+defaults:
+  run:
+    working-directory: Project_04_Test_Plan_Creator_Agent_V2
+
 jobs:
   typecheck:
     name: Type-check (frontend + backend)
@@ -34,6 +50,9 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: |
+            Project_04_Test_Plan_Creator_Agent_V2/package-lock.json
+            Project_04_Test_Plan_Creator_Agent_V2/backend/package-lock.json
 
       - name: Install frontend deps
         run: npm ci
@@ -42,11 +61,11 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Install backend deps
-        working-directory: backend
+        working-directory: Project_04_Test_Plan_Creator_Agent_V2/backend
         run: npm ci
 
       - name: Type-check backend
-        working-directory: backend
+        working-directory: Project_04_Test_Plan_Creator_Agent_V2/backend
         run: npx tsc --noEmit
 
   build:
@@ -60,6 +79,8 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: |
+            Project_04_Test_Plan_Creator_Agent_V2/package-lock.json
 
       - run: npm ci
 
@@ -69,7 +90,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
-          path: dist
+          path: Project_04_Test_Plan_Creator_Agent_V2/dist
           retention-days: 7
 
   e2e:
@@ -86,19 +107,22 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: |
+            Project_04_Test_Plan_Creator_Agent_V2/package-lock.json
+            Project_04_Test_Plan_Creator_Agent_V2/backend/package-lock.json
 
       - name: Install root deps
         run: npm ci
 
       - name: Install backend deps
-        working-directory: backend
+        working-directory: Project_04_Test_Plan_Creator_Agent_V2/backend
         run: npm ci
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
       # Start the backend in the background so tests that hit /api/* work.
-      # The 'wait-on' style loop polls /api/health until the server responds.
+      # Polls /api/health up to 30 times (1s each) until the server responds.
       - name: Start backend
         run: |
           (cd backend && npx tsx server.ts) &
@@ -135,13 +159,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: playwright-report
+          path: Project_04_Test_Plan_Creator_Agent_V2/playwright-report
           retention-days: 14
+          if-no-files-found: ignore
 
       - name: Upload test results (screenshots, videos, traces)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results
-          path: test-results
+          path: Project_04_Test_Plan_Creator_Agent_V2/test-results
           retention-days: 14
+          if-no-files-found: ignore
